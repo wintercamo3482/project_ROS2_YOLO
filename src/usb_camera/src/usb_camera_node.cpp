@@ -1,27 +1,33 @@
 #include "usb_camera_node.h"
 
-// Constructor: Registers a ROS node with the name "usb_camera_node".
-USBCameraNode::USBCameraNode() : Node("usb_camera_node")
+USBCameraNode::USBCameraNode() : Node("camera_publisher_node")
 {
-    this->cap_.open("/dev/video0");
+    this->mode_ = this->declare_parameter<std::string>("mode", "raw");
 
-    if (!this->cap_.isOpened())
+    if (this->mode_ == "raw")
     {
-        RCLCPP_ERROR(this->get_logger(), "[ERROR] Failed to open webcam!");
+        this->publisher_raw_ = this->create_publisher<sensor_msgs::msg::Image>("camera/image_raw", 10);
+        RCLCPP_INFO(this->get_logger(), "Publishing in RAW mode");
+    }
+    else if (this->mode_ == "compressed")
+    {
+        this->publisher_compressed_ = this->create_publisher<sensor_msgs::msg::CompressedImage>("camera/image_raw/compressed", 10);
+        RCLCPP_INFO(this->get_logger(), "Publishing in COMPRESSED mode");
+    }
+    
+    this->cap_.open(0);
+    
+    if (!cap_.isOpened())
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to open camera");
         rclcpp::shutdown();
         return;
     }
-
-    // Timer that calls the timerCallback() function every 30 fps.
+    
     this->timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(33),
-        std::bind(&USBCameraNode::timerCallback, this)
+            std::chrono::milliseconds(33),
+            std::bind(&USBCameraNode::timerCallback, this)
     );
-}
-
-void USBCameraNode::setPublisher(image_transport::Publisher pub)
-{
-    this->publisher_ = pub;
 }
 
 // Function called periodically by a timer.
@@ -36,35 +42,38 @@ void USBCameraNode::timerCallback()
         return;
     }
 
-    // Convert OpenCV cv::Mat to ROS2 message type (sensor_msgs/msg/Image).
-    // bgr8: OpenCV's default BGR 8bit color format
-    auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
+    if (this->mode_ == "raw")
+    {
+        // Convert OpenCV cv::Mat to ROS2 message type (sensor_msgs/msg/Image).
+        // bgr8: OpenCV's default BGR 8bit color format
+        auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
 
-    msg->header.stamp = this->now();
-    msg->header.frame_id = "camera_frame";
+        // Converted image is published to the ROS2 topic (camera/image_raw).
+        // image_transport is activated and /camera/image_raw/compressed is also created.
+        this->publisher_raw_->publish(*msg);
+    }
+           
+    else if (mode_ == "compressed")
+    {
+            std::vector<uchar> buf;
 
+            // Encode cv::Mat to jpg format and save the result to buf.
+            cv::imencode(".jpg", frame, buf);
 
-    // Converted image is published to the ROS2 topic (camera/image_raw).
-    // image_transport is activated and /camera/image_raw/compressed is also created.
-    this->publisher_.publish(*msg);
+            // Create a new message of type CompressedImage to be managed by a smart pointer.
+            auto compressed_msg = std::make_shared<sensor_msgs::msg::CompressedImage>();
+
+            compressed_msg->format = "jpeg";
+            compressed_msg->data = buf;
+
+            publisher_compressed_->publish(*compressed_msg);
+    }
 }
 
 int main(int argc, char * argv[])
 {
     rclcpp::init(argc, argv);
-
-    auto node = std::make_shared<USBCameraNode>();
-
-    // By creating an image_transport object based on node, it is possible to support various transmission methods such as compressed.
-    image_transport::ImageTransport it(node);
-
-    // Create a topic "camera/image_raw" and create a publisher.
-    auto pub = it.advertise("camera/image_raw", 10);
-
-    // Pass the publisher created above to the USBCameraNode class.
-    node->setPublisher(pub);
-
-    rclcpp::spin(node);
+    rclcpp::spin(std::make_shared<USBCameraNode>());
     rclcpp::shutdown();
 
     return 0;

@@ -2,6 +2,7 @@
 
 CameraSubscriberNode::CameraSubscriberNode() : Node("camera_subscriber_node")
 {
+    // Set the value to be changeable depending on the argument passed when running. (Default: RAW)
     this->mode_ = this->declare_parameter<std::string>("mode", "raw");
 
     if (this->mode_ == "raw")
@@ -25,12 +26,14 @@ CameraSubscriberNode::CameraSubscriberNode() : Node("camera_subscriber_node")
 
 void CameraSubscriberNode::rawImageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
 {
-    try {
+    try
+    {
         cv::Mat frame = cv_bridge::toCvCopy(msg, "bgr8")->image;
         cv::imshow("Camera Subscriber Viewer", frame);
         cv::waitKey(1);
     }
-    catch (cv_bridge::Exception & e) {
+    catch (cv_bridge::Exception & e)
+    {
         RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
     }
 }
@@ -39,13 +42,8 @@ void CameraSubscriberNode::compressedImageCallback(const sensor_msgs::msg::Compr
 {
     try
     {
+        // Decode msg into an OpenCV image.
         cv::Mat frame = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_COLOR);
-        
-        if (frame.empty())
-        {
-            RCLCPP_WARN(this->get_logger(), "Decoded compressed frame is empty");
-            return;
-        }
 
         cv::imshow("Camera Subscriber Viewer", frame);
         cv::waitKey(1);
